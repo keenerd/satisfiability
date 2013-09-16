@@ -1,5 +1,7 @@
 #! /usr/bin/env python
 
+# GPLv3
+
 puzzle = """\
 .........
 .....3.85

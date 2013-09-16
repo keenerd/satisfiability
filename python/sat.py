@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 # works in python 2 or 3
+# GPLv3
 
 import os, shutil, tempfile, subprocess
 from itertools import *

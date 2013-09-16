@@ -6,6 +6,8 @@ from sat import *
 # The GoL and braille rule generators are intentionally suboptimal, 
 # to demonstrate how to do complicated things without thinking hard.
 
+# GPLv3
+
 z_size = 2
 x_size = 6
 y_size = 9

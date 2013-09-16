@@ -10,6 +10,8 @@ chop into comment:clause sets
 disable permutes of clauses
 """
 
+# GPLv3
+
 path  = sys.argv[-1]
 path2 = '/tmp/debugger.tmp.cnf'
 
