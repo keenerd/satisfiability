@@ -5,24 +5,36 @@
 
 import os, shutil, tempfile, subprocess
 from itertools import *
+from collections import defaultdict
 
 # todo
 # more puzzle specific classes
-# automatic term allocation (builds a lookup function for you)
-# auto_term saving and loading
+# flood fill
+# auto_term saving and preloading
+# summary of automatic terms (debugging)
+# "write protect" flag for auto_term
+# hybrid manual/auto_term
 
 class CNF(object):
     def __init__(self, path=None, stdout=False, preloads=None):
-        self.path = path
+        self.cnf_path = path
         if path is None:
             fh = tempfile.NamedTemporaryFile(delete=False)
-            self.path = fh.name
+            self.cnf_path = fh.name
+            fh2 = tempfile.NamedTemporaryFile(delete=False)
+            self.lut_path = fh2.name
             self.del_flag = True
         else:
-            fh = open(path, 'w+b')
+            if path.endswith('.cnf'):
+                path = path[:-4]
+            self.cnf_path = path + '.cnf'
+            self.lut_path = path + '.lut'
+            fh = open(self.cnf_path, 'w+b')
+            fh2 = open(self.lut_path, 'w+b')
             self.del_flag = False
         # closed file needed for py2 and windows compatibility
         fh.close()
+        fh2.close()
         # adjust to whatever path you need
         self.minisat = 'minisat'
         self.clauses = 0
@@ -32,16 +44,18 @@ class CNF(object):
         self.stdout = stdout
         self.quiet = True
         self.term_lut = {}
+        self.auto_history = []
         if preloads is None:
             preloads = []
         for preload in preloads:
+            # todo, auto_term lut support
             self.comment('preloading %s' % preload)
-            fh = open(self.path, 'ab')
+            fh = open(self.cnf_path, 'ab')
             shutil.copyfileobj(open(preload, 'rb'), fh)
             fh.close()
     def write(self, cnf):
         "consumes an iterator of tuple clauses"
-        fh = open(self.path, 'a')
+        fh = open(self.cnf_path, 'a')
         for i,line in enumerate(cnf):
             line = list(line)
             if min(map(abs, line)) == 0:
@@ -69,7 +83,7 @@ class CNF(object):
         # breaks when passed a list...
         self.write([clause])
     def comment(self, c):
-        fh = open(self.path, 'a')
+        fh = open(self.cnf_path, 'a')
         fh.write('c ' + c + '\n')
         if self.stdout or not self.quiet:
             print('c ' + c)
@@ -87,7 +101,7 @@ class CNF(object):
         temp2 = tempfile.NamedTemporaryFile(delete=False)
         copy_path = temp2.name
         temp2.close()
-        shutil.copy(self.path, copy_path)
+        shutil.copy(self.cnf_path, copy_path)
         temp3 = tempfile.NamedTemporaryFile(delete=False)
         solve_path = temp3.name
         temp3.close()
@@ -123,19 +137,22 @@ class CNF(object):
             solution = list(map(int, solution.split(' ')))
             yield set(n for n in solution if n > 0)
             if interesting:
-                solution = [n for n in solution if abs(n) in interesting]
+                solution = [n for n in solution if abs(n) in interesting] + [0]
             negative = ' '.join(map(str, [-n for n in solution]))
             open(cnf_path, 'a').write(negative + '\n')
         os.remove(cnf_path)
         os.remove(solve_path)
     def clear(self):
-        "wipe the temp file, for interactive use only"
-        fh = open(self.path, 'w+b')
+        "wipe the temp files, for interactive use only"
+        fh = open(self.cnf_path, 'w+b')
+        fh.close()
+        fh = open(self.lut_path, 'w+b')
         fh.close()
         self.clauses = 0
     def close(self):
         if self.del_flag:
-            os.remove(self.path)
+            os.remove(self.cnf_path)
+            os.remove(self.lut_path)
         self.del_flag = False
     def __del__(self):
         self.close()
@@ -149,8 +166,12 @@ class CNF(object):
         if 'ordered' in kw_args and kw_args['ordered']==False:
             args = sorted(args)
         if args not in self.term_lut:
+            self.auto_history.append(args)
             self.term_lut[args] = self.maxterm + 1
             self.maxterm += 1
+            fh = open(self.lut_path, 'a')
+            fh.write(repr(args) + '\t' + repr(self.term_lut[args]) + '\n')
+            fh.close()
         return self.term_lut[args]
 
 def write_cnf(cnf):
