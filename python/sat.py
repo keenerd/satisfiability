@@ -263,7 +263,7 @@ def if_then(a, b):
     "relationship is one way, b can not affect a"
     yield (-a, b)
 
-def if_gen(a, b, modeA=None, modeB=None):
+def if_gen(a, b, modeA=None, modeB=None, bidirectional=False):
     "a and b can be lists, mode=any/all"
     # will probably bug out on iterator input
     if type(a) == int:
@@ -280,16 +280,22 @@ def if_gen(a, b, modeA=None, modeB=None):
         modeA = 'any'
     if modeB == any:
         modeB = 'any'
+    generator = []
     if modeA is None or modeB is None:
-        raise "must specify mode"
+        raise Exception("must specify mode")
     if modeA == 'all' and modeB == 'all':
-        return (neg(a) + (eb,) for eb in b)
+        generator = (neg(a) + (eb,) for eb in b)
     if modeA == 'all' and modeB == 'any':
-        return [ (neg(a) + tuple(b)) ]
+        generator = [ (neg(a) + tuple(b)) ]
     if modeA == 'any' and modeB == 'all':
-        return ((-ea, eb) for ea,eb in product(a, b))
+        generator = ((-ea, eb) for ea,eb in product(a, b))
     if modeA == 'any' and modeB == 'any':
-        return ((-ea,) + tuple(b) for ea in a)
+        generator = ((-ea,) + tuple(b) for ea in a)
+    for line in generator:
+        yield line
+    if bidirectional:
+        for line in if_gen(b, a, modeB, modeA, bidirectional=False):
+            yield line
 
 def if_wrap(cell, clauses):
     for clause in clauses:
