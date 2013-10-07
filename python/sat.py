@@ -9,7 +9,6 @@ from collections import defaultdict
 
 # todo
 # more puzzle specific classes
-# flood fill
 # auto_term saving and preloading
 # summary of automatic terms (debugging)
 # "write protect" flag for auto_term
@@ -170,6 +169,7 @@ class CNF(object):
             self.term_lut[args] = self.maxterm + 1
             self.maxterm += 1
             fh = open(self.lut_path, 'a')
+            # should not be a tuple?
             fh.write(repr(args) + '\t' + repr(self.term_lut[args]) + '\n')
             fh.close()
         return self.term_lut[args]
@@ -477,5 +477,87 @@ def panel(*ranges):
             continue
         ranges2.append(r)
     return product(*ranges2)
+
+def cartesian_adjacency(table, diagonals=False):
+    "takes a 2D array (row major), returns adj dict"
+    xlim = len(table[0])
+    ylim = len(table)
+    adj = defaultdict(set)
+    for x,y in product(range(xlim), range(ylim)):
+        points = neighbors(x, y, (0,xlim-1), (0,ylim-1), diagonals=diagonals)
+        points = [table[yp][xp] for xp,yp in points]
+        adj[table[y][x]].update(points)
+    return adj
+
+def expand(adj, cells):
+    cells2 = set(cells)
+    for c in cells:
+        cells2 |= adj[c]
+    return cells2
+
+# is flood even possible with non-auto functions?
+# add more cnf comments?
+# might not work quite right with tuple keys in the base
+# probably needs an option for slitherlink style fills
+
+def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
+    "cnf object, unique prefix, adjacent table, z size, exact size, seed label.  returns summary labels"
+    base = set(adj.keys())
+    if seed is None:
+        cells = base
+    else:
+        cells = set([seed])
+    volume = set()
+    f = cnf.auto_term
+    method = ('unbounded', 'exact')[exact]
+    cnf.comment('%s %s flood fill, size %i' % (prefix, method, size))
+    for layer in range(size):
+        # starting layer
+        cells2 = [(prefix,c,layer) for c in cells]
+        volume |= set(cells2)
+        # single starting point
+        if layer == 0:
+            cnf.write(window([f(*c2) for c2 in cells2], 1, 1))
+            cells = expand(adj, cells)
+            continue
+        if exact:
+            # always one per layer
+            cnf.write(window([f(*c2) for c2 in cells2], 1, 1))
+        # growth rules
+        for c in cells:
+            cells3 = expand(adj, [c])
+            if exact:
+                # if none in previous layers, then not you
+                cells3.discard(c)
+                cells3 = set((prefix,c3,l3) for c3,l3 in product(cells3, range(layer)))
+            else:
+                # if under you, then also you
+                cnf.write(if_then(f(prefix,c,layer-1), f(prefix,c,layer)))
+                # if none under you, then not you
+                cells3 = set((prefix,c3,layer-1) for c3 in cells3)
+            cells3 &= volume
+            cells3 = [f(*c3) for c3 in cells3]
+            cnf.write([cells3 + [-f(prefix,c,layer)]])
+        cells = expand(adj, cells)
+    # misc linkages
+    columns = defaultdict(set)
+    for _,c,l in volume:
+        columns[c].add((prefix,c,l))
+    for c in columns:
+        cells = [f(prefix,c,l) for _,_,l in columns[c]]
+        if exact:
+            # at most one per column
+            cnf.write(window(cells, 0, 1))
+        # if any in column, then summary
+        cnf.write(if_gen(cells, f(prefix,'summary',c), modeA=any, bidirectional=True))
+    # dead columns
+    flat_volume = set(c for _,c,_ in volume)
+    dead = base - flat_volume
+    for c in dead:
+        cnf.write_one(-f(prefix,'summary',c))
+    summary_map = dict((c,(prefix,'summary',c)) for c in base)
+    return summary_map
+
+
 
 
