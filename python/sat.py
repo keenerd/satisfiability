@@ -11,8 +11,10 @@ from collections import defaultdict
 # more puzzle specific classes
 # auto_term saving and preloading
 # summary of automatic terms (debugging)
-# "write protect" flag for auto_term
+# "write protect" flag for auto_term   (auto_mode = rw|wo|ro)
+# sanity check that all auto_terms are used?
 # hybrid manual/auto_term
+# line generator (cnf, adj, length, exact)
 
 class CNF(object):
     def __init__(self, path=None, stdout=False, preloads=None):
@@ -376,9 +378,7 @@ class Zebra(CNF):
         return a, b
     def f(self, a, b):
         a,b = self._key_sort(a, b)
-        side = self.side
-        return self._offsets[a] * side + self._offsets[b] + 1 + \
-               (self._gridA[a] + self._gridB[b]) * side*side
+        return self.auto_term(a, b)
     def show(self, axes, num=3):
         "takes an ordered list of axes"
         for solution in self.solutions(num):
