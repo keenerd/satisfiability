@@ -3,7 +3,7 @@
 # works in python 2 or 3
 # GPLv3
 
-import os, shutil, tempfile, subprocess
+import os, time, shutil, tempfile, subprocess
 from itertools import *
 from collections import defaultdict
 
@@ -14,7 +14,6 @@ from collections import defaultdict
 # "write protect" flag for auto_term   (auto_mode = rw|wo|ro)
 # sanity check that all auto_terms are used?
 # hybrid manual/auto_term
-# line generator (cnf, adj, length, exact)
 
 class CNF(object):
     def __init__(self, path=None, stdout=False, preloads=None):
@@ -523,6 +522,89 @@ def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
     summary_map = dict((c,(prefix,'summary',c)) for c in base)
     return summary_map
 
+def line(cnf, prefix, adj, size, exact=False, closed=False, seed_start=None, seed_end=None, seed_mid=None):
+    # todo, double conic with seed_end
+    if seed_mid and (seed_start or seed_end):
+        raise Exception("use only one seed")
+    if closed and (seed_start or seed_end):
+        raise Exception("loops don't have ends, use seed_mid")
+    # place seeds
+    seed = None
+    if seed_start:
+        seed = seed_start
+    if seed_mid:
+        seed = seed_mid
+    base = set(adj.keys())
+    if seed is None:
+        cells = base
+    else:
+        cells = set([seed])
+    volume = set()
+    f = cnf.auto_term
+    if seed:
+        cnf.write(f(prefix, seed, 0))
+    if seed_end:
+        cnf.write(f(prefix, seed_end, size-1))
+    steps = [(0, None)] + [(i, i-1) for i in range(1, size)]
+    if closed:
+        steps.append((size-1, 0))
+    for layer,target in steps:
+        cells2 = [(prefix,c,first) for c in cells]
+        volume |= set(cells2)
+        # one per layer
+        cnf.write(window([f(*c2) for c2 in cells2], 1, 1))
+        # single starting point
+        if layer == 0:
+            cells = expand(adj, cells)
+            continue
+        # growth
+        for c in cells:
+            cells3 = expand(adj, [c])
+            if exact:
+                # no idling
+                cells3.discard(c)
+            cells3 = set((prefix,c3,target) for c3 in cells3)
+            cells3 &= volume
+            cells3 = [f(*c3) for c3 in cells3]
+            cnf.write([cells3 + [-f(prefix,c,layer)]])
+        cells = expand(adj, cells)
+    # at most one per column
+    columns = defaultdict(set)
+    for _,c,l in volume:
+        columns[c].add((prefix,c,l))
+    for c in columns:
+        cells = [f(prefix,c,l) for _,_,l in columns[c]]
+        if exact:
+            cnf.write(window(cells, 0, 1))
+        else:
+            cnf.write(window(cells, 1, 1))
+    # summarize into a very weird adjacency table
+    # unidirectional?  bidirectional?
+    for c,links in adj.items():
+        for l,t in steps:
+            if t is None:
+                continue
+            for c2 in links:
+                first = (prefix,c,t)
+                second = (prefix,c2,l)
+                if first not in volume or second not in volume:
+                    cnf.write_one(-f(prefix, 'summary', c, c2))
+                    continue
+                cnf.write(if_gen([f(first), f(second)], f(prefix, 'summary', c, c2), modeA=all))
+    # also summarize to a flat sheet?
+    return
 
+def segment(center, n, e, s, w):
+    "binary points to unicode char"
+    # full width character?  double line symbols?
+    if not center:
+        return ' '
+    t = True
+    f = False
+    chars = {(t,t,t,t):'┼', (t,f,t,f):'│', (f,t,f,t):'─',
+             (f,t,t,t):'┬', (t,f,t,t):'┤', (t,t,f,t):'┴', (t,t,t,f):'├',
+             (t,t,f,f):'└', (f,t,t,f):'┌', (f,f,t,t):'┐', (t,f,f,t):'┘',
+             (t,f,f,f):'╵', (f,t,f,f):'╶', (f,f,t,f):'╷', (f,f,f,t):'╴'}
+    return chars[(n,e,s,w)]
 
 
