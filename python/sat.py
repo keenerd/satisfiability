@@ -125,7 +125,7 @@ class CNF(object):
         return True
     def _tail(self, path):
         return open(path).readlines()[-1].strip()
-    def solutions(self, how_many=1, interesting=None):
+    def solutions(self, how_many=1, interesting=None, extreme_unique=False):
         "'interesting' is the subset of cells that matter for the solution"
         if interesting is None:
             interesting = set([])
@@ -141,6 +141,14 @@ class CNF(object):
                 solution = [n for n in solution if abs(n) in interesting] + [0]
             negative = ' '.join(map(str, [-n for n in solution]))
             open(cnf_path, 'a').write(negative + '\n')
+            # goofy, but occasionally useful
+            if extreme_unique:
+                for n in solution:
+                    if n <= 0:
+                        continue
+                    if interesting and n not in interesting:
+                        continue
+                    open(cnf_path, 'a').write('%i 0\n' % -n)
         os.remove(cnf_path)
         os.remove(solve_path)
     def clear(self):
@@ -175,6 +183,15 @@ class CNF(object):
             fh.write(repr(args) + '\t' + repr(self.term_lut[args]) + '\n')
             fh.close()
         return self.term_lut[args]
+    def auto_search(self, *args):
+        "provide matching functions, returns terms"
+        # todo, regex or something less messy
+        # and allow for variable length matches
+        for term in self.term_lut:
+            if len(args) != len(term):
+                continue
+            if all(a(t) for a,t in zip(args, term)):
+                yield term
 
 def write_cnf(cnf):
     for line in cnf:
