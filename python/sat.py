@@ -14,6 +14,7 @@ from collections import defaultdict
 # "write protect" flag for auto_term   (auto_mode = rw|wo|ro)
 # sanity check that all auto_terms are used?
 # hybrid manual/auto_term
+# portable auto_term that flattens and strings everything
 
 class CNF(object):
     def __init__(self, path=None, stdout=False, preloads=None):
@@ -61,8 +62,8 @@ class CNF(object):
             if min(map(abs, line)) == 0:
                 raise Exception("Illegal term, 0")
             self.maxterm = max(self.maxterm, max(line), abs(min(line)))
-            if i > self.limit:
-                raise Exception("Overclause!")
+            #if i > self.limit:
+            #    raise Exception("Overclause!")
             output = ' '.join(map(str, list(line) + [0]))
             #fh.write((output + '\n').encode('utf-8'))
             fh.write(output + '\n')
@@ -453,6 +454,16 @@ def cartesian_adjacency(table, diagonals=False):
         adj[table[y][x]].update(points)
     return adj
 
+def cartesian_table(xs, ys, diagonals=False):
+    "adj dict uses (x,y) tuples as keys"
+    adj_table = []
+    for y in ys:
+        adj_table.append([])
+        for x in xs:
+            adj_table[-1].append((x,y))
+    adj = cartesian_adjacency(adj_table)
+    return adj
+
 def expand(adj, cells):
     cells2 = set(cells)
     for c in cells:
@@ -521,6 +532,37 @@ def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
         cnf.write_one(-f(prefix,'summary',c))
     summary_map = dict((c,(prefix,'summary',c)) for c in base)
     return summary_map
+
+def tree_one(cnf, prefix, cells):
+    "like window({0,1},1) but n^1 instead of n^2"
+    # returns a summary field for window(0,1) or window(1,1)
+    # todo, make generic like window
+    f = cnf.auto_term
+    heap_count = 0
+    cells = list(cells)
+    assert len(cells) > 0
+    while len(cells) > 1:
+        cells2 = []
+        while cells:
+            if len(cells) == 1:
+                cells2.append(cells.pop())
+                break
+            a = cells.pop()
+            b = cells.pop()
+            c = (prefix, heap_count)
+            # window(0, 1)
+            cnf.write_one(-f(a), -f(b))
+            # if_then(a, c), if_then(b, c)
+            cnf.write_one(-f(a), f(c))
+            cnf.write_one(-f(b), f(c))
+            # if c then a or b
+            cnf.write_one(-f(c), f(a), f(b))
+            cells2.append(c)
+            heap_count += 1
+        cells = cells2
+    assert len(cells) == 1
+    #cnf.write_one(f(cells[0]))
+    return cells[0]
 
 def line(cnf, prefix, adj, size, exact=False, closed=False, seed_start=None, seed_end=None, seed_mid=None):
     # todo, double conic with seed_end
@@ -601,7 +643,7 @@ def segment(center, n, e, s, w):
         return ' '
     t = True
     f = False
-    chars = {(t,t,t,t):'┼', (t,f,t,f):'│', (f,t,f,t):'─',
+    chars = {(t,t,t,t):'┼', (t,f,t,f):'│', (f,t,f,t):'─', (f,f,f,f):'·',
              (f,t,t,t):'┬', (t,f,t,t):'┤', (t,t,f,t):'┴', (t,t,t,f):'├',
              (t,t,f,f):'└', (f,t,t,f):'┌', (f,f,t,t):'┐', (t,f,f,t):'┘',
              (t,f,f,f):'╵', (f,t,f,f):'╶', (f,f,t,f):'╷', (f,f,f,t):'╴'}
