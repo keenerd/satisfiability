@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+# -*- coding: utf-8 -*-
 
 # works in python 2 or 3
 # GPLv3
@@ -11,7 +12,6 @@ from collections import defaultdict
 # more puzzle specific classes
 # auto_term saving and preloading
 # summary of automatic terms (debugging)
-# "write protect" flag for auto_term   (auto_mode = rw|wo|ro)
 # sanity check that all auto_terms are used?
 # hybrid manual/auto_term
 # portable auto_term that flattens and strings everything
@@ -46,6 +46,7 @@ class CNF(object):
         self.quiet = True
         self.term_lut = {}
         self.auto_history = []
+        self.auto_mode = 'rw'  # rw, ro, wo
         if preloads is None:
             preloads = []
         for preload in preloads:
@@ -174,6 +175,12 @@ class CNF(object):
             return
         if 'ordered' in kw_args and kw_args['ordered']==False:
             args = sorted(args)
+        if args in self.term_lut:
+            if 'r' not in self.auto_mode:
+                raise Exception("Error: read attempt")
+        else:
+            if 'w' not in self.auto_mode:
+                raise Exception("Error: write attempt")
         if args not in self.term_lut:
             self.auto_history.append(args)
             self.term_lut[args] = self.maxterm + 1
