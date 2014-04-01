@@ -15,6 +15,7 @@ from collections import defaultdict
 # sanity check that all auto_terms are used?
 # hybrid manual/auto_term
 # portable auto_term that flattens and strings everything
+# figure out a fast (and compat) way of file writing
 
 class CNF(object):
     def __init__(self, path=None, stdout=False, preloads=None):
@@ -355,25 +356,19 @@ def one_or_three(cells):
 
 class Zebra(CNF):
     "handles everything for a zebra puzzle"
-    def load_axes(self, values):
+    def load_axes(self, values, size=None):
         "takes a dictionary of lists"
         self.everything = values
         self.all_sets = list(values.values())
         self.dims = len(values)
-        self.side = len(self.all_sets[0])  # only works with square puzzles...
+        self.size = size
+        if size is None:  # only works with square puzzles
+            self.size = len(self.all_sets[0])
         self.keys = [v for vals in values.values() for v in vals]
         assert len(self.keys) == len(list(set(self.keys)))
-        self._layout_grid()
+        self._sanity_check()
         self._grid_rules()
-    def _layout_grid(self):
-        self._offsets = dict(zip(self.keys, cycle(range(self.side))))
-        gridA = [0]
-        for i in range(self.dims-2, 0, -1):
-            gridA.append(gridA[-1] + i)
-        self._gridA = dict((s,val) for sublist, val in zip(self.all_sets[:-1], gridA) for s in sublist)
-        gridB = range(self.dims - 1)
-        self._gridB = dict((s,val) for sublist, val in zip(self.all_sets[1:], gridB) for s in sublist)
-        # sanity check
+    def _sanity_check(self):
         cells = []
         for a_keys, b_keys in combinations(self.all_sets, 2):
             cells.extend(self.f(a,b) for a,b in product(a_keys, b_keys))
@@ -383,19 +378,26 @@ class Zebra(CNF):
         self.comment('one thing per axis')
         for a_keys, b_keys in combinations(self.all_sets, 2):
             for a in a_keys:
+                if len(a_keys) != self.size:  # unless axis is lopsided
+                    break
                 cells = [f(a,b) for b in b_keys]
                 self.write(window(cells, 1, 1))
             for b in b_keys:
+                if len(b_keys) != self.size:
+                    break
                 cells = [f(a,b) for a in a_keys]
                 self.write(window(cells, 1, 1))
         self.comment('links in triples')
-        # two of three not allowed
+        # two of three not allowed, unless lopsided
         for ak, bk, ck in combinations(self.all_sets, 3):
             for a,b,c in product(ak, bk, ck):
                 c1,c2,c3 = f(a,b), f(a,c), f(b,c)
-                self.write_one(c1, -c2, -c3)
-                self.write_one(-c1, c2, -c3)
-                self.write_one(-c1, -c2, c3)
+                if len(ck) == self.size:
+                    self.write_one(c1, -c2, -c3)
+                if len(bk) == self.size:
+                    self.write_one(-c1, c2, -c3)
+                if len(ak) == self.size:
+                    self.write_one(-c1, -c2, c3)
     def _key_sort(self, a, b):
         if self.keys.index(a) > self.keys.index(b):
             return b, a
