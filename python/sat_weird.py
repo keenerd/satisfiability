@@ -43,5 +43,109 @@ def one_set_true(*star_cells):
     for xs in product(*[range(len(sc)) for sc in star_cells]):
         yield tuple(chain.from_iterable(starmap(chop, zip(star_cells, xs))))
 
+def tree_one(cnf, prefix, cells):
+    "like window(0,1) but O(n^1) instead of O(n^2)"
+    # uses autoterm
+    # returns a summary term: "is there a true in the cells"
+    # todo, make generic like window
+    f = cnf.auto_term
+    heap_count = 0
+    cells = list(cells)
+    assert len(cells) > 0
+    while len(cells) > 1:
+        cells2 = []
+        while cells:
+            if len(cells) == 1:
+                cells2.append(cells.pop())
+                break
+            a = cells.pop()
+            b = cells.pop()
+            c = (prefix, heap_count)
+            # window(0, 1)
+            cnf.write_one(-f(a), -f(b))
+            # if_then(a, c), if_then(b, c)
+            cnf.write_one(-f(a), f(c))
+            cnf.write_one(-f(b), f(c))
+            # if c then a or b
+            cnf.write_one(-f(c), f(a), f(b))
+            cells2.append(c)
+            heap_count += 1
+        cells = cells2
+    assert len(cells) == 1
+    #cnf.write_one(f(cells[0]))
+    return cells[0]
+
+def line(cnf, prefix, adj, size, exact=False, closed=False, seed_start=None, seed_end=None, seed_mid=None):
+    "a restricted type of flood fill"
+    # todo, double conic with seed_end
+    if seed_mid and (seed_start or seed_end):
+        raise Exception("use only one seed")
+    if closed and (seed_start or seed_end):
+        raise Exception("loops don't have ends, use seed_mid")
+    # place seeds
+    seed = None
+    if seed_start:
+        seed = seed_start
+    if seed_mid:
+        seed = seed_mid
+    base = set(adj.keys())
+    if seed is None:
+        cells = base
+    else:
+        cells = set([seed])
+    volume = set()
+    f = cnf.auto_term
+    if seed:
+        cnf.write(f(prefix, seed, 0))
+    if seed_end:
+        cnf.write(f(prefix, seed_end, size-1))
+    steps = [(0, None)] + [(i, i-1) for i in range(1, size)]
+    if closed:
+        steps.append((size-1, 0))
+    for layer,target in steps:
+        cells2 = [(prefix,c,first) for c in cells]
+        volume |= set(cells2)
+        # one per layer
+        cnf.write(window([f(*c2) for c2 in cells2], 1, 1))
+        # single starting point
+        if layer == 0:
+            cells = expand(adj, cells)
+            continue
+        # growth
+        for c in cells:
+            cells3 = expand(adj, [c])
+            if exact:
+                # no idling
+                cells3.discard(c)
+            cells3 = set((prefix,c3,target) for c3 in cells3)
+            cells3 &= volume
+            cells3 = [f(*c3) for c3 in cells3]
+            cnf.write([cells3 + [-f(prefix,c,layer)]])
+        cells = expand(adj, cells)
+    # at most one per column
+    columns = defaultdict(set)
+    for _,c,l in volume:
+        columns[c].add((prefix,c,l))
+    for c in columns:
+        cells = [f(prefix,c,l) for _,_,l in columns[c]]
+        if exact:
+            cnf.write(window(cells, 0, 1))
+        else:
+            cnf.write(window(cells, 1, 1))
+    # summarize into a very weird adjacency table
+    # unidirectional?  bidirectional?
+    for c,links in adj.items():
+        for l,t in steps:
+            if t is None:
+                continue
+            for c2 in links:
+                first = (prefix,c,t)
+                second = (prefix,c2,l)
+                if first not in volume or second not in volume:
+                    cnf.write_one(-f(prefix, 'summary', c, c2))
+                    continue
+                cnf.write(if_gen([f(first), f(second)], f(prefix, 'summary', c, c2), modeA=all))
+    # also summarize to a flat sheet?
+    return
 
 
