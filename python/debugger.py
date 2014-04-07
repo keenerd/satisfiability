@@ -39,6 +39,10 @@ if len(sys.argv) == 3:
 else:
     limit = 1
 
+if valid(path):
+    print('No bugs in CNF.')
+    sys.exit(0)
+
 for i in range(1, limit+1):
     for skip in combinations(clauses, i):
         fh = open(path2, 'w')
