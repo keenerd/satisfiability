@@ -15,29 +15,26 @@ from collections import defaultdict
 # sanity check that all auto_terms are used?
 # hybrid manual/auto_term
 # portable auto_term that flattens and strings everything
-# figure out a fast (and compat) way of file writing
 # maybe move the geometry stuff elsewhere
+# random prefix generation
 
 class CNF(object):
     def __init__(self, path=None, stdout=False, preloads=None):
         self.cnf_path = path
         if path is None:
-            fh = tempfile.NamedTemporaryFile(delete=False)
-            self.cnf_path = fh.name
-            fh2 = tempfile.NamedTemporaryFile(delete=False)
-            self.lut_path = fh2.name
+            self.fh_cnf = tempfile.NamedTemporaryFile('w+', 1, delete=False)
+            self.cnf_path = self.fh_cnf.name
+            self.fh_lut = tempfile.NamedTemporaryFile('w+', 1, delete=False)
+            self.lut_path = self.fh_lut.name
             self.del_flag = True
         else:
             if path.endswith('.cnf'):
                 path = path[:-4]
             self.cnf_path = path + '.cnf'
             self.lut_path = path + '.lut'
-            fh = open(self.cnf_path, 'w+b')
-            fh2 = open(self.lut_path, 'w+b')
+            self.fh_cnf = open(self.cnf_path, 'w+', 1)
+            self.fh_lut = open(self.lut_path, 'w+', 1)
             self.del_flag = False
-        # closed file needed for py2 and windows compatibility
-        fh.close()
-        fh2.close()
         # adjust to whatever path you need
         self.minisat = 'minisat'
         self.clauses = 0
@@ -54,12 +51,9 @@ class CNF(object):
         for preload in preloads:
             # todo, auto_term lut support
             self.comment('preloading %s' % preload)
-            fh = open(self.cnf_path, 'ab')
-            shutil.copyfileobj(open(preload, 'rb'), fh)
-            fh.close()
+            shutil.copyfileobj(open(preload, 'rb'), self.fh_cnf)
     def write(self, cnf):
         "consumes an iterator of tuple clauses"
-        fh = open(self.cnf_path, 'a')
         for i,line in enumerate(cnf):
             line = list(line)
             if min(map(abs, line)) == 0:
@@ -68,13 +62,12 @@ class CNF(object):
             #if i > self.limit:
             #    raise Exception("Overclause!")
             output = ' '.join(map(str, list(line) + [0]))
-            #fh.write((output + '\n').encode('utf-8'))
-            fh.write(output + '\n')
+            #self.fh_cnf.write((output + '\n').encode('utf-8'))
+            self.fh_cnf.write(output + '\n')
             if self.stdout:
                 print(output)
             self.clauses += 1
             self.terms.update(map(abs, line))
-        fh.close()
     def read(self, path):
         "for external CNFs, no error checking"
         for line in open(path):
@@ -87,14 +80,22 @@ class CNF(object):
         # breaks when passed a list...
         self.write([clause])
     def comment(self, c):
-        fh = open(self.cnf_path, 'a')
-        fh.write('c ' + c + '\n')
+        self.fh_cnf.write('c ' + c + '\n')
         if self.stdout or not self.quiet:
             print('c ' + c)
-        fh.close()
+    def _close_cnf(self):
+        "probably needed for os compatibility"
+        self.fh_cnf.flush()
+        os.fsync(self.fh_cnf.fileno())
+        self.fh_cnf.close()
+    def _reopen_cnf(self):
+        "probably needed for os compatibility"
+        self.fh_cnf = open(self.cnf_path, 'a+', 1)
     def _run_minisat(self, cnf_path, solve_path):
+        self._close_cnf()
         pipe = subprocess.PIPE
         status = subprocess.call([self.minisat, cnf_path, solve_path], stdout=pipe, stderr=pipe)
+        self._reopen_cnf()
         if status == 10:
             return True
         if status == 20:
@@ -105,7 +106,9 @@ class CNF(object):
         temp2 = tempfile.NamedTemporaryFile(delete=False)
         copy_path = temp2.name
         temp2.close()
+        self._close_cnf()
         shutil.copy(self.cnf_path, copy_path)
+        self._reopen_cnf()
         temp3 = tempfile.NamedTemporaryFile(delete=False)
         solve_path = temp3.name
         temp3.close()
@@ -156,11 +159,15 @@ class CNF(object):
         os.remove(solve_path)
     def clear(self):
         "wipe the temp files, for interactive use only"
-        fh = open(self.cnf_path, 'w+b')
-        fh.close()
-        fh = open(self.lut_path, 'w+b')
-        fh.close()
+        self.fh_cnf.close()
+        self.fh_cnf = open(self.cnf_path, 'w+', 1)
+        self.fh_lut.close()
+        self.fh_lut = open(self.lut_path, 'w+', 1)
         self.clauses = 0
+        self.maxterm = 0
+        self.terms = set()
+        self.term_lut = {}
+        self.auto_history = []
     def close(self):
         if self.del_flag:
             os.remove(self.cnf_path)
@@ -179,18 +186,16 @@ class CNF(object):
             args = sorted(args)
         if args in self.term_lut:
             if 'r' not in self.auto_mode:
-                raise Exception("Error: read attempt")
+                raise Exception("Error: existing label " + str(args))
         else:
             if 'w' not in self.auto_mode:
-                raise Exception("Error: write attempt")
+                raise Exception("Error: creating label " + str(args))
         if args not in self.term_lut:
             self.auto_history.append(args)
             self.term_lut[args] = self.maxterm + 1
             self.maxterm += 1
-            fh = open(self.lut_path, 'a')
             # should not be a tuple?
-            fh.write(repr(args) + '\t' + repr(self.term_lut[args]) + '\n')
-            fh.close()
+            self.fh_lut.write(repr(args) + '\t' + repr(self.term_lut[args]) + '\n')
         return self.term_lut[args]
     def auto_search(self, *args):
         "provide matching functions, returns terms"
