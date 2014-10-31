@@ -6,7 +6,7 @@
 
 import os, time, shutil, tempfile, subprocess
 from itertools import *
-from collections import defaultdict
+from collections import defaultdict, deque
 
 # todo
 # more puzzle specific classes
@@ -577,5 +577,32 @@ def segment(center, n, e, s, w):
              (t,t,f,f):'└', (f,t,t,f):'┌', (f,f,t,t):'┐', (t,f,f,t):'┘',
              (t,f,f,f):'╵', (f,t,f,f):'╶', (f,f,t,f):'╷', (f,f,f,t):'╴'}
     return chars[(n,e,s,w)]
+
+def tree_one(cnf, prefix, cells):
+    "like window(0,1) or window(1,1) but O(n) instead of O(n^2) (uses autoterm)"
+    # returns a summary term: "is there a true in the cells"
+    # todo, make as generic as window
+    f = cnf.auto_term
+    node_count = 0
+    cells = deque(cells)
+    mode_back = cnf.auto_mode
+    assert len(cells) > 0
+    while len(cells) > 1:
+        a = cells.pop()
+        b = cells.pop()
+        cnf.auto_mode = 'wo'
+        c = f(prefix, node_count)
+        cnf.auto_mode = 'ro'
+        # window(0, 1)
+        cnf.write_one(-a, -b)
+        # if_then(a, c), if_then(b, c)
+        cnf.write_one(-a, c)
+        cnf.write_one(-b, c)
+        # if c then a or b
+        cnf.write_one(-c, a, b)
+        cells.appendleft(c)
+        node_count += 1
+    cnf.auto_mode = mode_back
+    return cells[0]
 
 

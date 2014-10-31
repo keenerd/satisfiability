@@ -43,38 +43,6 @@ def one_set_true(*star_cells):
     for xs in product(*[range(len(sc)) for sc in star_cells]):
         yield tuple(chain.from_iterable(starmap(chop, zip(star_cells, xs))))
 
-def tree_one(cnf, prefix, cells):
-    "like window(0,1) but O(n^1) instead of O(n^2)"
-    # uses autoterm
-    # returns a summary term: "is there a true in the cells"
-    # todo, make generic like window
-    f = cnf.auto_term
-    heap_count = 0
-    cells = list(cells)
-    assert len(cells) > 0
-    while len(cells) > 1:
-        cells2 = []
-        while cells:
-            if len(cells) == 1:
-                cells2.append(cells.pop())
-                break
-            a = cells.pop()
-            b = cells.pop()
-            c = (prefix, heap_count)
-            # window(0, 1)
-            cnf.write_one(-f(a), -f(b))
-            # if_then(a, c), if_then(b, c)
-            cnf.write_one(-f(a), f(c))
-            cnf.write_one(-f(b), f(c))
-            # if c then a or b
-            cnf.write_one(-f(c), f(a), f(b))
-            cells2.append(c)
-            heap_count += 1
-        cells = cells2
-    assert len(cells) == 1
-    #cnf.write_one(f(cells[0]))
-    return cells[0]
-
 def line(cnf, prefix, adj, size, exact=False, closed=False, seed_start=None, seed_end=None, seed_mid=None):
     "a restricted type of flood fill"
     # todo, double conic with seed_end
