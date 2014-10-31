@@ -81,6 +81,7 @@ class CNF(object):
         self.write([clause])
     def comment(self, c):
         self.fh_cnf.write('c ' + c + '\n')
+        self.fh_lut.write('# ' + c + '\n')
         if self.stdout or not self.quiet:
             print('c ' + c)
     def _close_cnf(self):
@@ -195,7 +196,10 @@ class CNF(object):
             self.term_lut[args] = self.maxterm + 1
             self.maxterm += 1
             # should not be a tuple?
-            self.fh_lut.write(repr(args) + '\t' + repr(self.term_lut[args]) + '\n')
+            lut_line = repr(args) + '\t' + repr(self.term_lut[args])
+            if lut_line.startswith('#'):
+                lut_line = lut_line.replace('#', '\#', 1)
+            self.fh_lut.write(lut_line + '\n')
         return self.term_lut[args]
     def auto_search(self, *args):
         "provide matching functions, returns terms"

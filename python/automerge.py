@@ -8,6 +8,8 @@ import os, sys
 # (value could be inferred from order, but why chance it)
 # could be more paranoid, assumes input luts are well formed
 
+# todo: preserve comments across merges
+
 if len(sys.argv) < 4:
     print('automerge.py output in1 in2 ...')
     sys.exit(2)
@@ -26,7 +28,10 @@ if os.path.isfile(out_lut):
 def load_lut(path):
     lut = {}
     for line in open(path):
-        k,v = line.strip().split('\t')
+        line = line.strip()
+        if line.startswith('#'):
+            continue
+        k,v = line.split('\t')
         lut[k] = v
     return lut
 
