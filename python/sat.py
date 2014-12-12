@@ -35,8 +35,11 @@ class CNF(object):
             self.fh_cnf = open(self.cnf_path, 'w+', 1)
             self.fh_lut = open(self.lut_path, 'w+', 1)
             self.del_flag = False
-        # adjust to whatever path you need
+        self.fh_cnf.write('p cnf 0 0\n')
+        # adjust to whatever path and options you need
         self.minisat = 'minisat'
+        self.picosat = 'picosat'
+        self.solver = self._run_minisat  # override this too
         self.clauses = 0
         self.limit = 100000
         self.maxterm = 0
@@ -95,13 +98,41 @@ class CNF(object):
     def _run_minisat(self, cnf_path, solve_path):
         self._close_cnf()
         pipe = subprocess.PIPE
-        status = subprocess.call([self.minisat, cnf_path, solve_path], stdout=pipe, stderr=pipe)
+        cmd = self.minisat
+        if type(cmd) == str:
+            cmd = [cmd]
+        cmd += [cnf_path, solve_path]
+        status = subprocess.call(cmd, stdout=pipe, stderr=pipe)
         self._reopen_cnf()
+        if status == 1:
+            raise Exception("Minisat return 1, SIGINT or unreadable input")
+        if status == 3:
+            raise Exception("Minisat return 3, input parsing failure")
         if status == 10:
-            return True
+            solution = open(solve_path).readlines()[-1].strip()
+            solution = list(map(int, solution.split(' ')))
+            return set(n for n in solution if n > 0)
         if status == 20:
             return False
         raise Exception("Unknown minisat return %i" % status)
+    def _run_picosat(self, cnf_path, solve_path):
+        self._close_cnf()
+        pipe = subprocess.PIPE
+        cmd = self.picosat
+        if type(cmd) == str:
+            cmd = [cmd]
+        cmd += ['-f', '-o', solve_path, cnf_path]
+        status = subprocess.call(cmd, stdout=pipe, stderr=pipe)
+        self._reopen_cnf()
+        if status == 10:
+            solution = set()
+            for line in open(solve_path):
+                solution.update(line.strip().split())
+            solution -= set(['s', 'SATISFIABLE', 'v'])
+            return set(int(n) for n in solution if int(n) > 0)
+        if status == 20:
+            return False
+        raise Exception("Unknown picosat return %i" % status)
     def setup_temps(self):
         "returns temp paths, manually delete when done"
         temp2 = tempfile.NamedTemporaryFile(delete=False)
@@ -115,23 +146,21 @@ class CNF(object):
         temp3.close()
         return copy_path, solve_path
     def verify(self, allow_partial = False):
-        cnf_path,solve_path  = self.setup_temps()
-        status = self._run_minisat(cnf_path, solve_path)
-        os.remove(cnf_path)
-        os.remove(solve_path)
-        if not status:
-            raise Exception("No possible solutions")
-        if allow_partial:
-            return True
         if not min(self.terms) == 1:
             raise Exception("CNF does not start at 1")
         if not max(self.terms) == len(self.terms):
             #print(max(self.terms), len(self.terms))
             #print(set(range(1, max(self.terms)+1)) - self.terms)
             raise Exception("CNF has gaps")
+        cnf_path,solve_path  = self.setup_temps()
+        status = bool(self.solver(cnf_path, solve_path))
+        os.remove(cnf_path)
+        os.remove(solve_path)
+        if not status:
+            raise Exception("No possible solutions")
+        if allow_partial:
+            return True
         return True
-    def _tail(self, path):
-        return open(path).readlines()[-1].strip()
     def solutions(self, how_many=1, interesting=None, extreme_unique=False):
         "'interesting' is the subset of cells that matter for the solution"
         if interesting is None:
@@ -139,15 +168,14 @@ class CNF(object):
         interesting = set(interesting)
         cnf_path,solve_path  = self.setup_temps()
         for i in range(how_many):
-            if not self._run_minisat(cnf_path, solve_path):
+            solution = self.solver(cnf_path, solve_path)
+            if not solution:
                 break
-            solution = self._tail(solve_path)
-            solution = list(map(int, solution.split(' ')))
-            yield set(n for n in solution if n > 0)
+            yield solution
             if interesting:
-                solution = [n for n in solution if abs(n) in interesting] + [0]
+                solution = [n for n in solution if abs(n) in interesting]
             negative = ' '.join(map(str, [-n for n in solution]))
-            open(cnf_path, 'a').write(negative + '\n')
+            open(cnf_path, 'a').write(negative + ' 0\n')
             # goofy, but occasionally useful
             if extreme_unique:
                 for n in solution:
@@ -285,6 +313,7 @@ def link(*cells):
 def consecutive(cells1, cells2):
     "element of c1 must come immediately before element of c2"
     # both optional?
+    # circular mode?
     cells1 = list(cells1)
     cells2 = list(cells2)
     assert len(cells1) == len(cells2)
@@ -296,6 +325,7 @@ def consecutive(cells1, cells2):
     yield (-cells2[0],)
 
 def adjacent(cells1, cells2):
+    # circular mode?
     assert len(cells1) == len(cells2)
     for c1,c2 in zip(cells1, cells2):
         yield (-c1, -c2)
@@ -310,6 +340,7 @@ def adjacent(cells1, cells2):
         yield clause
 
 def not_adjacent(cells1, cells2):
+    # circular mode?
     yield (-cells1[0], -cells2[1])
     for c1, c2a, c2b in zip(cells1[1:], cells2, cells2[2:]):
         yield (-c1, -c2a)

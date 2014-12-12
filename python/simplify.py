@@ -9,6 +9,15 @@
 
 # GPLv3
 
+"""
+todo: pure terms
+    if only x or -x appears
+    then remove all x/-x from clauses
+    add single x/-x clause
+    align the 0 column
+"""
+
+
 import sys
 from itertools import *
 
