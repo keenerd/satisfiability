@@ -49,6 +49,7 @@ class CNF(object):
         self.term_lut = {}
         self.auto_history = []
         self.auto_mode = 'rw'  # rw, ro, wo
+        self._auto_stack = []
         if preloads is None:
             preloads = []
         for preload in preloads:
@@ -238,6 +239,12 @@ class CNF(object):
                 continue
             if all(a(t) for a,t in zip(args, term)):
                 yield term
+    def auto_stack_push(self):
+        "for internal functions to preserve user-set mode state"
+        self._auto_stack.append(self.auto_mode)
+    def auto_stack_pop(self):
+        "for internal functions to preserve user-set mode state"
+        self.auto_mode = self._auto_stack.pop()
 
 def write_cnf(cnf):
     for line in cnf:
@@ -352,6 +359,13 @@ def if_then(a, b):
     "relationship is one way, b cannot affect a"
     yield (-a, b)
 
+def anyall(n):
+    if n == all:
+        return 'all'
+    if n == any:
+        return 'any'
+    return n
+
 def if_gen(a, b, modeA=None, modeB=None, bidirectional=False):
     "a and b can be lists, mode=any/all"
     # will probably bug out on iterator input
@@ -361,14 +375,8 @@ def if_gen(a, b, modeA=None, modeB=None, bidirectional=False):
     if type(b) == int:
         b = [b]
         modeB = 'all'
-    if modeA == all:
-        modeA = 'all'
-    if modeB == all:
-        modeB = 'all'
-    if modeA == any:
-        modeA = 'any'
-    if modeB == any:
-        modeB = 'any'
+    modeA = anyall(modeA)
+    modeB = anyall(modeB)
     generator = []
     if modeA is None or modeB is None:
         raise Exception("must specify mode")
@@ -455,6 +463,165 @@ class Zebra(CNF):
                     line += [b for b in self.everything[axe] if self.f(a,b) in solution]
                 print(' '.join(line))
             print('\n') 
+
+class Sequence(CNF):
+    "handles everything for a time-sequence puzzle"
+    def load_axes(self, events, pages):
+        "takes non-overlapping lists"
+        assert len(events) + len(pages) == len(set(events) | set(pages))
+        self.events = events
+        self.pages = pages
+        self.ticks = ['time%i' % i for i in range(1, len(list(pages))+1)]
+        self._grid_rules()
+    def _grid_rules(self):
+        f = self.auto_term
+        self.auto_stack_push()
+        self.auto_mode = 'wo'
+        self.comment('generating terms')
+        for t,p in product(sorted(self.ticks), sorted(self.pages)):
+            f(t, p)
+        for t,e in product(sorted(self.ticks), sorted(self.events)):
+            f(t, e, 'state')
+            f(t, e, 'transition')
+        self.auto_mode = 'ro'
+        self.comment('each event once')
+        for t in self.ticks:
+            cells = [f(t,p) for p in self.pages]
+            self.write(window(cells, 1, 1))
+        for p in self.pages:
+            cells = [f(t,p) for t in self.ticks]
+            self.write(window(cells, 1, 1))
+        for e in self.events:
+            cells = [f(t, e, 'transition') for t in self.ticks]
+            self.write(window(cells, 0, 1))
+        self.comment('time links')
+        for e in self.events:
+            for t1,t2 in zip(self.ticks[:-1], self.ticks[1:]):
+                c1 = f(t1, e, 'state')
+                c2 = f(t1, e, 'transition')
+                c3 = f(t2, e, 'state')
+                c4 = f(t2, e, 'transition')
+                self.write_one(-c2,  c1)
+                self.write_one(-c4,  c3)
+                self.write_one(-c1,  c3)
+                self.write_one(-c1, -c4)
+                self.write_one( c1,  c4, -c3)
+        self.comment('initial state')
+        for e in self.events:
+            self.write_one(-f('time1', e, 'state'))
+        self.auto_stack_pop()
+    def every_event_happens(self):
+        for e in self.events:
+            self.write_one(self.auto_term(self.ticks[-1], e, 'state'))
+    def s(self, string):
+        "too lazy to quote"
+        command = string.split()
+        assert len(command) == 3
+        self.f(*command)
+    def f(self, thing1, mode, thing2):
+        "single event, mode is (before during after), single event/page"
+        if mode not in ['before', 'during', 'after']:
+            raise Exception('bad mode %s' % mode)
+        if thing1 not in self.events + self.pages:
+            raise Exception('bad thing %s' % thing1)
+        if thing2 not in self.events + self.pages:
+            raise Exception('bad thing %s' % thing2)
+        if thing1 in self.events and thing2 in self.pages:
+            return self.f2(thing1, mode, thing2)
+        if thing1 in self.events and thing2 in self.events:
+            return self.f3(thing1, mode, thing2)
+        if thing1 in self.pages and thing2 in self.pages:
+            return self.f4(thing1, mode, thing2)
+        raise Exception('new f() combo?')
+    def f2(self, event, mode, page):
+        for t in self.ticks:
+            s1 = self.auto_term(t, event, 'state')
+            t1 = self.auto_term(t, event, 'transition')
+            p1 = self.auto_term(t, page)
+            if mode == 'before':
+                self.write(if_gen(p1, s1, bidirectional=False))
+                self.write(if_gen(-s1, -p1, bidirectional=False))
+                self.write(if_gen(p1, -t1, bidirectional=False))
+                self.write(if_gen(t1, -p1, bidirectional=False))
+            if mode == 'during':
+                self.write(if_gen(p1, t1, bidirectional=True))
+            if mode == 'after':
+                self.write(if_gen(p1, -s1, bidirectional=False))
+                self.write(if_gen(s1, -p1, bidirectional=False))
+                self.write(if_gen(p1, -t1, bidirectional=False))
+                self.write(if_gen(t1, -p1, bidirectional=False))
+    def f3(self, event1, mode, event2):
+        for t in self.ticks:
+            s1 = self.auto_term(t, event1, 'state')
+            s2 = self.auto_term(t, event2, 'state')
+            t1 = self.auto_term(t, event1, 'transition')
+            t2 = self.auto_term(t, event2, 'transition')
+            if mode == 'before':
+                self.write(if_gen(s2, s1, bidirectional=False))
+                self.write(if_gen(-s1, -s2, bidirectional=False))
+                self.write_one(-t1, -t2)
+            if mode == 'during':
+                self.write(if_gen(t1, t2, bidirectional=True))
+            if mode == 'after':
+                self.write(if_gen(s2, -s1, bidirectional=False))
+                self.write(if_gen(s1, -s2, bidirectional=False))
+                self.write(if_gen(s2, -t2, bidirectional=False))
+                self.write(if_gen(t2, -s2, bidirectional=False))
+    def f4(self, page1, mode, page2):
+        if mode == 'during':
+            raise Exception('bad mode %s' % mode)
+        for i,t1 in enumerate(self.ticks):
+            for j,t2 in enumerate(self.ticks):
+                if t1 == t2:
+                    continue
+                if mode == 'before' and i < j:
+                    continue
+                if mode == 'after' and i > j:
+                    continue
+                p1 = self.auto_term(t1, page1)
+                p2 = self.auto_term(t2, page2)
+                self.write_one(-p1, -p2)
+    def tally_state(self, n, events, page):
+        for t in self.ticks:
+            cells = [self.auto_term(t, e, 'state') for e in events]
+            p = self.auto_term(t, page)
+            for line in window(cells, n, n):
+                self.write([[-p] + list(line)])
+    def tally_transition(self, n, events, page):
+        for t in self.ticks:
+            cells = [self.auto_term(t, e, 'transition') for e in events]
+            p = self.auto_term(t, page)
+            for line in window(cells, n, n):
+                self.write([[-p] + list(line)])
+    def nth_page(self, page, n):
+        "n=0 for first, n=-1 for last"
+        self.write_one(self.auto_term(self.ticks[n], page))
+    def ordered(self, events):
+        "list of events from oldest to newest"
+        for e1, e2 in zip(events[:-1], events[1:]):
+            self.f(e1, 'before', e2)
+    def show_solutions(self, n=3):
+        print('terms:', self.maxterm)
+        print('clauses:', self.clauses)
+        #self.verify()
+        for solution in self.solutions(n):
+            print()
+            #print(sorted(list(solution)))
+            for t in self.ticks:
+                line = [t]
+                line.extend(p for p in self.pages if self.auto_term(t, p) in solution)
+                line.extend(e for e in self.events if self.auto_term(t, e, 'transition') in solution)
+                print(' '.join(line))
+    def verbose_solutions(self, n=3):
+        #self.verify()
+        for solution in self.solutions(n):
+            print()
+            #print(sorted(list(solution)))
+            for t in self.ticks:
+                line = [t]
+                line.extend(p for p in self.pages if self.auto_term(t, p) in solution)
+                line.extend([e, e.upper()][self.auto_term(t, e, 'transition') in solution] for e in self.events if self.auto_term(t, e, 'state') in solution)
+                print(' '.join(line))
 
 def neighbors(x, y, x_range, y_range, diagonals=False):
     # return a function instead?
