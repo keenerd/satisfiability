@@ -695,7 +695,7 @@ def cartesian_table(xs, ys, diagonals=False):
         adj_table.append([])
         for x in xs:
             adj_table[-1].append((x,y))
-    adj = cartesian_adjacency(adj_table)
+    adj = cartesian_adjacency(adj_table, diagonals)
     return adj
 
 def expand(adj, cells):
@@ -709,8 +709,9 @@ def expand(adj, cells):
 # might not work quite right with tuple keys in the base
 # probably needs an option for slitherlink style fills
 
-def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
+def floodfill(cnf, prefix, adj, size, exact=False, seed=None, wrap=False):
     "cnf object, unique prefix, adjacent table, z size, exact size, seed label.  returns summary labels"
+    assert not(not exact and wrap)
     base = set(adj.keys())
     if seed is None:
         cells = base
@@ -719,6 +720,7 @@ def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
     volume = set()
     f = cnf.auto_term
     method = ('unbounded', 'exact')[exact]
+    method += ' ' + ('unbounded', 'wrap-around')[wrap]
     cnf.comment('%s %s flood fill, size %i' % (prefix, method, size))
     for layer in range(size):
         # starting layer
@@ -727,12 +729,14 @@ def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
         # single starting point
         if layer == 0:
             cnf.write(window([f(*c2) for c2 in cells2], 1, 1))
+        if layer == 0 and not wrap:
             cells = expand(adj, cells)
             continue
-        if exact:
+        if exact and layer > 0:
             # always one per layer
             cnf.write(window([f(*c2) for c2 in cells2], 1, 1))
         # growth rules
+        prev_layer = (layer - 1) % size
         for c in cells:
             cells3 = expand(adj, [c])
             if exact:
@@ -741,9 +745,9 @@ def floodfill(cnf, prefix, adj, size, exact=False, seed=None):
                 cells3 = set((prefix,c3,l3) for c3,l3 in product(cells3, range(layer)))
             else:
                 # if under you, then also you
-                cnf.write(if_then(f(prefix,c,layer-1), f(prefix,c,layer)))
+                cnf.write(if_then(f(prefix,c,prev_layer), f(prefix,c,layer)))
                 # if none under you, then not you
-                cells3 = set((prefix,c3,layer-1) for c3 in cells3)
+                cells3 = set((prefix,c3,prev_layer) for c3 in cells3)
             cells3 &= volume
             cells3 = [f(*c3) for c3 in cells3]
             cnf.write([cells3 + [-f(prefix,c,layer)]])
