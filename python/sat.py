@@ -152,6 +152,10 @@ class CNF(object):
         if not max(self.terms) == len(self.terms):
             #print(max(self.terms), len(self.terms))
             #print(set(range(1, max(self.terms)+1)) - self.terms)
+            print('gap size:', abs(max(self.terms) - len(self.terms)))
+            for k,v in self.term_lut.items():
+                if v not in self.terms:
+                    print(k)
             raise Exception("CNF has gaps")
         cnf_path,solve_path  = self.setup_temps()
         status = bool(self.solver(cnf_path, solve_path))
@@ -216,10 +220,10 @@ class CNF(object):
             args = sorted(args)
         if args in self.term_lut:
             if 'r' not in self.auto_mode:
-                raise Exception("Error: existing label " + str(args))
+                raise Exception("Error: pre-existing label " + str(args))
         else:
             if 'w' not in self.auto_mode:
-                raise Exception("Error: creating label " + str(args))
+                raise Exception("Error: ro label creation " + str(args))
         if args not in self.term_lut:
             self.auto_history.append(args)
             self.term_lut[args] = self.maxterm + 1
@@ -239,9 +243,10 @@ class CNF(object):
                 continue
             if all(a(t) for a,t in zip(args, term)):
                 yield term
-    def auto_stack_push(self):
+    def auto_stack_push(self, new_mode):
         "for internal functions to preserve user-set mode state"
         self._auto_stack.append(self.auto_mode)
+        self.auto_mode = new_mode
     def auto_stack_pop(self):
         "for internal functions to preserve user-set mode state"
         self.auto_mode = self._auto_stack.pop()
@@ -317,43 +322,45 @@ def link(*cells):
         yield (cells[-1], -cells[0])
         yield (-cells[-1], cells[0])
 
-def consecutive(cells1, cells2):
+def consecutive(cells1, cells2, circular=False):
     "element of c1 must come immediately before element of c2"
-    # both optional?
-    # circular mode?
     cells1 = list(cells1)
     cells2 = list(cells2)
     assert len(cells1) == len(cells2)
-    c2 = list(cells2)[1:]
-    for pair in zip(cells1, c2):
-        for rule in xnor(*pair):
-            yield rule
-    yield (-cells1[-1],)
-    yield (-cells2[0],)
-
-def adjacent(cells1, cells2):
-    # circular mode?
-    assert len(cells1) == len(cells2)
     for c1,c2 in zip(cells1, cells2):
         yield (-c1, -c2)
-    yield (-cells1[0], cells2[1])
-    for c1, c2a, c2b in zip(cells1[1:], cells2, cells2[2:]):
-        yield (-c1, c2a, c2b)
-    yield (-cells1[-1], cells2[-2])
-    # window(0, 1) would be obvious but wrong when length == 2
-    for clause in xnor(cells1[0], cells2[1]):
-        yield clause
-    for clause in xnor(cells1[-1], cells2[0]):
-        yield clause
+    for c1,c2 in zip(cells1, cells2[1:]):
+        # xnor / maybe(2) / if-then
+        yield (-c1, c2)
+        yield (c1, -c2)
+    if circular:
+        yield (-cells1[-1], cells2[0])
+        yield (cells1[-1], -cells2[0])
+    else:
+        yield (-cells1[-1],)
+        yield (-cells2[0],)
 
-def not_adjacent(cells1, cells2):
-    # circular mode?
-    yield (-cells1[0], -cells2[1])
-    for c1, c2a, c2b in zip(cells1[1:], cells2, cells2[2:]):
-        yield (-c1, -c2a)
-        yield (-c1, -c2b)
-    yield (-cells1[-1], -cells2[-2])
+def adjacent(cells1, cells2, circular=False):
+    # todo, make be O(n) again
+    assert len(cells1) == len(cells2)
+    for i1,i2 in product(range(len(cells1)), range(len(cells2))):
+        if i1+1 == i2:
+            continue
+        if i1-1 == i2:
+            continue
+        if circular and i1==0 and i2==len(cells2)-1:
+            continue
+        if circular and i2==0 and i1==len(cells1)-1:
+            continue
+        yield(-cells1[i1], -cells2[i2])
 
+def not_adjacent(cells1, cells2, circular=False):
+    assert len(cells1) == len(cells2)
+    for i in range(len(cells1)):
+        if not circular and i == 0:
+            continue
+        yield(-cells1[i], -cells2[i-1])
+        yield(-cells2[i], -cells1[i-1])
 
 def if_then(a, b):
     "relationship is one way, b cannot affect a"
@@ -475,8 +482,7 @@ class Sequence(CNF):
         self._grid_rules()
     def _grid_rules(self):
         f = self.auto_term
-        self.auto_stack_push()
-        self.auto_mode = 'wo'
+        self.auto_stack_push('wo')
         self.comment('generating terms')
         for t,p in product(sorted(self.ticks), sorted(self.pages)):
             f(t, p)
@@ -769,6 +775,7 @@ def floodfill(cnf, prefix, adj, size, exact=False, seed=None, wrap=False):
     for c in dead:
         cnf.write_one(-f(prefix,'summary',c))
     summary_map = dict((c,(prefix,'summary',c)) for c in base)
+    cnf.auto_stack_pop()
     return summary_map
 
 def segment(center, n, e, s, w):
@@ -791,14 +798,14 @@ def tree_one(cnf, prefix, cells):
     f = cnf.auto_term
     node_count = 0
     cells = deque(cells)
-    mode_back = cnf.auto_mode
+    cnf.auto_stack_push('ro')
     assert len(cells) > 0
     while len(cells) > 1:
         a = cells.pop()
         b = cells.pop()
-        cnf.auto_mode = 'wo'
+        cnf.auto_stack_push('wo')
         c = f(prefix, node_count)
-        cnf.auto_mode = 'ro'
+        cnf.auto_stack_pop()
         # window(0, 1)
         cnf.write_one(-a, -b)
         # if_then(a, c), if_then(b, c)
@@ -808,7 +815,7 @@ def tree_one(cnf, prefix, cells):
         cnf.write_one(-c, a, b)
         cells.appendleft(c)
         node_count += 1
-    cnf.auto_mode = mode_back
+    cnf.auto_stack_pop()
     return cells[0]
 
 
