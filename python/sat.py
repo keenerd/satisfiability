@@ -412,12 +412,14 @@ def one_or_three(cells):
 
 class Zebra(CNF):
     "handles everything for a zebra puzzle"
-    def load_axes(self, values, size=None):
+    def load_axes(self, values, size=None, unconstrained=None):
         "takes a dictionary of lists"
+        # uncons. is an experimental feature to let tags to exist multiple times
         self.everything = values
         self.all_sets = list(values.values())
         self.dims = len(values)
         self.size = size
+        self.unconstrained = unconstrained
         if size is None:  # only works with square puzzles
             self.size = len(self.all_sets[0])
         self.keys = [v for vals in values.values() for v in vals]
@@ -431,28 +433,37 @@ class Zebra(CNF):
         assert len(cells) == len(list(set(cells)))
     def _grid_rules(self):
         f = self.f
+        uncon = self.unconstrained
         self.comment('one thing per axis')
         for a_keys, b_keys in combinations(self.all_sets, 2):
             for a in a_keys:
                 if len(a_keys) != self.size:  # unless axis is lopsided
                     break
-                cells = [f(a,b) for b in b_keys]
+                if a in uncon:
+                    break
+                cells = [f(a,b) for b in b_keys if b not in uncon]
+                if not cells:
+                    continue
                 self.write(window(cells, 1, 1))
             for b in b_keys:
                 if len(b_keys) != self.size:
                     break
-                cells = [f(a,b) for a in a_keys]
+                if b in uncon:
+                    break
+                cells = [f(a,b) for a in a_keys if a not in uncon]
+                if not cells:
+                    continue
                 self.write(window(cells, 1, 1))
         self.comment('links in triples')
         # two of three not allowed, unless lopsided
         for ak, bk, ck in combinations(self.all_sets, 3):
             for a,b,c in product(ak, bk, ck):
                 c1,c2,c3 = f(a,b), f(a,c), f(b,c)
-                if len(ck) == self.size:
+                if len(ck) == self.size and c not in uncon:
                     self.write_one(c1, -c2, -c3)
-                if len(bk) == self.size:
+                if len(bk) == self.size and b not in uncon:
                     self.write_one(-c1, c2, -c3)
-                if len(ak) == self.size:
+                if len(ak) == self.size and a not in uncon:
                     self.write_one(-c1, -c2, c3)
     def _key_sort(self, a, b):
         if self.keys.index(a) > self.keys.index(b):
