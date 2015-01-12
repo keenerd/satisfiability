@@ -490,6 +490,7 @@ class Sequence(CNF):
         self.events = events
         self.pages = pages
         self.ticks = ['time%i' % i for i in range(1, len(list(pages))+1)]
+        self.page_comments = {}
         self._grid_rules()
     def _grid_rules(self):
         f = self.auto_term
@@ -525,11 +526,19 @@ class Sequence(CNF):
                 self.write_one( c1,  c4, -c3)
         self.comment('initial state')
         for e in self.events:
-            self.write_one(-f('time1', e, 'state'))
+            self.write(if_gen(f('time1', e, 'transition'), f('time1', e, 'state'), bidirectional=True))
         self.auto_stack_pop()
     def every_event_happens(self):
         for e in self.events:
             self.write_one(self.auto_term(self.ticks[-1], e, 'state'))
+    def every_page_busy(self):
+        for t in self.ticks:
+            self.write_one(*[self.auto_term(t, e, 'transition') for e in self.events])
+    def page_comment(self, page, comment):
+        if page not in self.pages:
+            raise Exception('bad page %s' % page)
+        self.page_comments[page] = comment
+        self.comment(page + ' ' + comment)
     def s(self, string):
         "too lazy to quote"
         command = string.split()
@@ -545,6 +554,9 @@ class Sequence(CNF):
             raise Exception('bad thing %s' % thing2)
         if thing1 in self.events and thing2 in self.pages:
             return self.f2(thing1, mode, thing2)
+        if thing1 in self.pages and thing2 in self.events:
+            inv_mode = {'before':'after', 'during':'during', 'after':'before'}
+            return self.f2(thing2, inv_mode[mode], thing1)
         if thing1 in self.events and thing2 in self.events:
             return self.f3(thing1, mode, thing2)
         if thing1 in self.pages and thing2 in self.pages:
@@ -620,7 +632,7 @@ class Sequence(CNF):
     def show_solutions(self, n=3):
         print('terms:', self.maxterm)
         print('clauses:', self.clauses)
-        #self.verify()
+        self.verify()
         for solution in self.solutions(n):
             print()
             #print(sorted(list(solution)))
@@ -629,16 +641,28 @@ class Sequence(CNF):
                 line.extend(p for p in self.pages if self.auto_term(t, p) in solution)
                 line.extend(e for e in self.events if self.auto_term(t, e, 'transition') in solution)
                 print(' '.join(line))
-    def verbose_solutions(self, n=3):
-        #self.verify()
+    def verbose_solutions(self, n=3, extra_verbose=False):
+        f = self.auto_term
+        self.verify()
         for solution in self.solutions(n):
             print()
             #print(sorted(list(solution)))
             for t in self.ticks:
-                line = [t]
-                line.extend(p for p in self.pages if self.auto_term(t, p) in solution)
-                line.extend([e, e.upper()][self.auto_term(t, e, 'transition') in solution] for e in self.events if self.auto_term(t, e, 'state') in solution)
+                line = []
+                pages = [p for p in self.pages if f(t, p) in solution]
+                for p in pages:
+                    if p in self.page_comments:
+                        line.append(p + ' ' + self.page_comments[p])
+                        line.append('\n ')
+                line.append(t)
+                transitions = set(e for e in self.events if f(t, e, 'transition') in solution)
+                done = set(e for e in self.events if f(t, e, 'state') in solution)
+                done = done - transitions
+                line.extend(sorted(e.upper() for e in transitions))
+                if extra_verbose:
+                    line.extend(sorted(done))
                 print(' '.join(line))
+            print('\n\n')
 
 def neighbors(x, y, x_range, y_range, diagonals=False):
     # return a function instead?
