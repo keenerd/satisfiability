@@ -37,8 +37,7 @@ class CNF(object):
             self.del_flag = False
         self.fh_cnf.write('p cnf 0 0\n')
         # adjust to whatever path and options you need
-        self.minisat = 'minisat'
-        self.picosat = 'picosat'
+        self.custom_run = ''
         self.solver = self._run_minisat  # override this too
         self.clauses = 0
         self.limit = 100000
@@ -99,7 +98,9 @@ class CNF(object):
     def _run_minisat(self, cnf_path, solve_path):
         self._close_cnf()
         pipe = subprocess.PIPE
-        cmd = self.minisat
+        cmd = self.custom_run
+        if not cmd:
+            cmd = 'minisat'
         if type(cmd) == str:
             cmd = [cmd]
         cmd += [cnf_path, solve_path]
@@ -119,7 +120,9 @@ class CNF(object):
     def _run_picosat(self, cnf_path, solve_path):
         self._close_cnf()
         pipe = subprocess.PIPE
-        cmd = self.picosat
+        cmd = self.custom_run
+        if not cmd:
+            cmd = 'picosat'
         if type(cmd) == str:
             cmd = [cmd]
         cmd += ['-f', '-o', solve_path, cnf_path]
@@ -134,6 +137,31 @@ class CNF(object):
         if status == 20:
             return False
         raise Exception("Unknown picosat return %i" % status)
+    def _run_cryptominisat(self, cnf_path, solve_path):
+        self._close_cnf()
+        pipe = subprocess.PIPE
+        cmd = self.custom_run
+        if not cmd:
+            cmd = 'cryptominisat'
+        if type(cmd) == str:
+            cmd = [cmd]
+        cmd += [cnf_path]
+        p = subprocess.Popen(cmd, stdout=pipe, stderr=pipe, universal_newlines=True)
+        self._reopen_cnf()
+        # used stdout because cms4 can't easily output to a file
+        solution, _ = p.communicate()
+        status = p.returncode
+        if status == 10:
+            solution = solution.split('\n')
+            solution = [s for s in solution if s.startswith('v ')]
+            solution = solution[-1][2:]
+            solution = list(map(int, solution.split(' ')))
+            return set(n for n in solution if n > 0)
+        if status == 20:
+            return False
+        if status == 15:
+            raise Exception("Error: status not determined")
+        raise Exception("Unknown cryptominisat return %i" % status)
     def setup_temps(self):
         "returns temp paths, manually delete when done"
         temp2 = tempfile.NamedTemporaryFile(delete=False)
@@ -158,10 +186,10 @@ class CNF(object):
                     print(k)
             raise Exception("CNF has gaps")
         cnf_path,solve_path  = self.setup_temps()
-        status = bool(self.solver(cnf_path, solve_path))
+        status = self.solver(cnf_path, solve_path)
         os.remove(cnf_path)
         os.remove(solve_path)
-        if not status:
+        if status == False:
             raise Exception("No possible solutions")
         if allow_partial:
             return True
@@ -174,12 +202,14 @@ class CNF(object):
         cnf_path,solve_path  = self.setup_temps()
         for i in range(how_many):
             solution = self.solver(cnf_path, solve_path)
-            if not solution:
+            if solution == False:
                 break
             yield solution
             if interesting:
                 solution = [n for n in solution if abs(n) in interesting]
             negative = ' '.join(map(str, [-n for n in solution]))
+            if len(negative) == 0:
+                negative = ' '.join(str(n) for n in range(1, self.maxterm))
             open(cnf_path, 'a').write(negative + ' 0\n')
             # goofy, but occasionally useful
             if extreme_unique:
@@ -434,6 +464,8 @@ class Zebra(CNF):
     def _grid_rules(self):
         f = self.f
         uncon = self.unconstrained
+        if uncon is None:
+            uncon = []
         self.comment('one thing per axis')
         for a_keys, b_keys in combinations(self.all_sets, 2):
             for a in a_keys:
