@@ -826,6 +826,33 @@ def segment(center, n, e, s, w):
              (t,f,f,f):'╵', (f,t,f,f):'╶', (f,f,t,f):'╷', (f,f,f,t):'╴'}
     return chars[(n,e,s,w)]
 
+ansi_table = {
+    None: 0,
+    'bold': 1,
+    'dim': 2,
+    'underscore': 4,
+    'blink': 5,
+    'reverse': 7,
+    'invis': 8,
+    'black': 30,
+    'red': 31,
+    'green': 32,
+    'yellow': 33,
+    'blue': 34,
+    'magenta': 35,
+    'cyan': 36,
+    'white': 37}
+
+def ansi(attrib=None, fore=None, back=None):
+    "leave blank for reset"
+    # implicit a=3 on color set?
+    a = ansi_table[attrib]
+    f = ansi_table[fore]
+    b = ansi_table[back]
+    if b:
+        b += 10
+    return '\033[%i;%i;%im' % (a, f, b)
+
 def tree_one(cnf, prefix, cells):
     "like window(0,1) or window(1,1) but O(n) instead of O(n^2) (uses autoterm)"
     # returns a summary term: "is there a true in the cells"
